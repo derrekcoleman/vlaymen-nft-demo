@@ -30,3 +30,9 @@ p {
 .btn.btn-ghost {
   @apply shadow-none;
 }
+
+/* RainbowKit custom styles */
+[data-theme="light"] .dropdown-end .dropdown-content {
+  border: 1px solid #915bf8 !important;
+  box-shadow: 0 4px 12px rgba(145, 91, 248, 0.15) !important;
+}
