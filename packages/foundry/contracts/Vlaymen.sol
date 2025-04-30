@@ -14,8 +14,7 @@ contract Vlaymen is ERC721, Ownable {
     {}
 
     function _baseURI() internal pure override returns (string memory) {
-      // TODO: update to Vercel url
-        return "https://baseurl.com/";
+        return "https://vlaymen-nft-demo.vercel.app/nft_images/";
     }
 
     function safeMint(address to) public returns (uint256) {
