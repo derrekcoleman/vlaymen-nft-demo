@@ -45,13 +45,25 @@ export const ScaffoldEthAppWithProviders = ({ children }: { children: React.Reac
     setMounted(true);
   }, []);
 
+  const customLightTheme = lightTheme({
+    accentColor: "#915BF8",
+    accentColorForeground: "white",
+    borderRadius: "medium",
+  });
+
+  const customDarkTheme = darkTheme({
+    accentColor: "#915BF8",
+    accentColorForeground: "white",
+    borderRadius: "medium",
+  });
+
   return (
     <WagmiProvider config={wagmiConfig}>
       <QueryClientProvider client={queryClient}>
-        <ProgressBar height="3px" color="#2299dd" />
+        <ProgressBar height="3px" color="#3D1EFE" />
         <RainbowKitProvider
           avatar={BlockieAvatar}
-          theme={mounted ? (isDarkMode ? darkTheme() : lightTheme()) : lightTheme()}
+          theme={mounted ? (isDarkMode ? customDarkTheme : customLightTheme) : customLightTheme}
         >
           <ScaffoldEthApp>{children}</ScaffoldEthApp>
         </RainbowKitProvider>
