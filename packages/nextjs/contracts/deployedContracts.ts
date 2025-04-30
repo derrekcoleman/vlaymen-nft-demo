@@ -7,7 +7,7 @@ import { GenericContractsDeclaration } from "~~/utils/scaffold-eth/contract";
 const deployedContracts = {
   31337: {
     Vlaymen: {
-      address: "0xe1aa25618fa0c7a1cfdab5d6b456af611873b629",
+      address: "0xb19b36b1456e65e3a6d514d3f715f204bd59f431",
       abi: [
         {
           type: "constructor",
@@ -274,6 +274,49 @@ const deployedContracts = {
         },
         {
           type: "function",
+          name: "tokenByIndex",
+          inputs: [
+            {
+              name: "index",
+              type: "uint256",
+              internalType: "uint256",
+            },
+          ],
+          outputs: [
+            {
+              name: "",
+              type: "uint256",
+              internalType: "uint256",
+            },
+          ],
+          stateMutability: "view",
+        },
+        {
+          type: "function",
+          name: "tokenOfOwnerByIndex",
+          inputs: [
+            {
+              name: "owner",
+              type: "address",
+              internalType: "address",
+            },
+            {
+              name: "index",
+              type: "uint256",
+              internalType: "uint256",
+            },
+          ],
+          outputs: [
+            {
+              name: "",
+              type: "uint256",
+              internalType: "uint256",
+            },
+          ],
+          stateMutability: "view",
+        },
+        {
+          type: "function",
           name: "tokenURI",
           inputs: [
             {
@@ -287,6 +330,19 @@ const deployedContracts = {
               name: "",
               type: "string",
               internalType: "string",
+            },
+          ],
+          stateMutability: "view",
+        },
+        {
+          type: "function",
+          name: "totalSupply",
+          inputs: [],
+          outputs: [
+            {
+              name: "",
+              type: "uint256",
+              internalType: "uint256",
             },
           ],
           stateMutability: "view",
@@ -423,6 +479,11 @@ const deployedContracts = {
         },
         {
           type: "error",
+          name: "ERC721EnumerableForbiddenBatchMint",
+          inputs: [],
+        },
+        {
+          type: "error",
           name: "ERC721IncorrectOwner",
           inputs: [
             {
@@ -526,6 +587,22 @@ const deployedContracts = {
         },
         {
           type: "error",
+          name: "ERC721OutOfBoundsIndex",
+          inputs: [
+            {
+              name: "owner",
+              type: "address",
+              internalType: "address",
+            },
+            {
+              name: "index",
+              type: "uint256",
+              internalType: "uint256",
+            },
+          ],
+        },
+        {
+          type: "error",
           name: "OwnableInvalidOwner",
           inputs: [
             {
@@ -548,7 +625,7 @@ const deployedContracts = {
         },
       ],
       inheritedFunctions: {},
-      deploymentFile: "run-1745975100.json",
+      deploymentFile: "run-1745996222.json",
       deploymentScript: "Deploy.s.sol",
     },
   },

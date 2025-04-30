@@ -1,10 +1,13 @@
 "use client";
 
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import Image from "next/image";
 import type { NextPage } from "next";
-import { useAccount } from "wagmi";
-import { useScaffoldEventHistory, useScaffoldWriteContract } from "~~/hooks/scaffold-eth";
+import { zeroAddress } from "viem";
+import { useAccount, useReadContracts } from "wagmi";
+import { AddressInput } from "~~/components/scaffold-eth";
+import { useDeployedContractInfo, useScaffoldReadContract, useScaffoldWriteContract } from "~~/hooks/scaffold-eth";
+import { notification } from "~~/utils/scaffold-eth";
 
 // Define the NFT type
 type Nft = {
@@ -32,7 +35,28 @@ const Home: NextPage = () => {
   };
 
   const { address: connectedAddress } = useAccount();
-  const { writeContractAsync: mintNft, isPending } = useScaffoldWriteContract({
+
+  // Get Deployed contract info for Vlaymen
+  const { data: deployedContractData } = useDeployedContractInfo("Vlaymen");
+
+  // Read balance of connected address
+  const {
+    data: balance,
+    isLoading: isBalanceLoading,
+    refetch: refetchBalance,
+  } = useScaffoldReadContract({
+    contractName: "Vlaymen",
+    functionName: "balanceOf",
+    args: [connectedAddress ?? zeroAddress],
+    query: {
+      enabled: !!connectedAddress && !!deployedContractData,
+    },
+  });
+
+  const { writeContractAsync: mintNft, isPending: isMintPending } = useScaffoldWriteContract<"Vlaymen">({
+    contractName: "Vlaymen",
+  });
+  const { writeContractAsync: transferNft, isPending: isTransferPending } = useScaffoldWriteContract<"Vlaymen">({
     contractName: "Vlaymen",
   });
 
@@ -45,19 +69,11 @@ const Home: NextPage = () => {
     );
   };
 
-  // Validate address: either 42 chars starting with 0x or ending with .eth
   const validateAddress = (address: string) => {
     return (
       (address.length === 42 && address.startsWith("0x")) ||
       (address.trim() !== "" && !address.includes(" ") && address.endsWith(".eth"))
     );
-  };
-
-  // Handle address input change
-  const handleAddressChange = (e: React.ChangeEvent<HTMLInputElement>) => {
-    const value = e.target.value;
-    setAddressInput(value);
-    setIsAddressValid(validateAddress(value));
   };
 
   const openTransferModal = (e: React.MouseEvent, nftId: string) => {
@@ -67,34 +83,55 @@ const Home: NextPage = () => {
     if (modal) modal.showModal();
   };
 
-  // Only fetch transfer events if wallet is connected
+  // Prepare arguments for tokenOfOwnerByIndex calls
+  const tokenOfOwnerByIndexArgs = useMemo(() => {
+    // Ensure balance is a valid number (convert BigInt) and contract data exists
+    const numBalance = balance !== undefined ? Number(balance) : 0;
+    if (numBalance === 0 || !connectedAddress || !deployedContractData?.abi || !deployedContractData?.address) {
+      return [];
+    }
+    return Array.from({ length: numBalance }, (_, index) => ({
+      abi: deployedContractData.abi,
+      address: deployedContractData.address,
+      functionName: "tokenOfOwnerByIndex",
+      args: [connectedAddress, BigInt(index)],
+    }));
+  }, [balance, connectedAddress, deployedContractData]);
+
+  // Fetch all token IDs owned by the user
   const {
-    data: transferEvents,
-    refetch: refetchTransferEvents,
-    isLoading: isEventsLoading,
-  } = useScaffoldEventHistory({
-    contractName: "Vlaymen",
-    eventName: "Transfer",
-    fromBlock: 0n,
-    filters: { to: connectedAddress },
-    enabled: !!connectedAddress,
+    data: ownedTokenIdsData,
+    isLoading: isTokenIdsLoading,
+    refetch: refetchTokenIds,
+  } = useReadContracts({
+    contracts: tokenOfOwnerByIndexArgs,
+    query: {
+      enabled: !!connectedAddress && !!deployedContractData && tokenOfOwnerByIndexArgs.length > 0,
+    },
   });
 
-  // Function to update NFTs from transfer events wrapped in useCallback
-  const updateNftsFromEvents = useCallback(() => {
-    if (transferEvents) {
-      // Convert token IDs to the format needed for display
-      const tokenNfts = transferEvents
-        .filter(event => event.args.tokenId !== undefined)
-        .map(event => ({
-          id: `#${event.args.tokenId!.toString()}`,
-          selected: false,
-        }))
-        .reverse(); // Reverse the list for display order
-
-      setNfts(tokenNfts);
+  // Process fetched token IDs into the Nft state format
+  useEffect(() => {
+    if (ownedTokenIdsData) {
+      const tokenIds = ownedTokenIdsData
+        .map(item => {
+          if (item.status === "success") {
+            // Use unknown intermediate cast as suggested by linter
+            const resultAsBigInt = item.result as unknown as bigint;
+            // Double-check type just in case assertion fails at runtime
+            if (typeof resultAsBigInt === "bigint") {
+              return { id: `#${resultAsBigInt.toString()}`, selected: false };
+            }
+          }
+          return null;
+        })
+        .filter((item): item is Nft => item !== null)
+        .reverse();
+      setNfts(tokenIds);
+    } else if (!isTokenIdsLoading && balance === 0n) {
+      setNfts([]);
     }
-  }, [transferEvents]);
+  }, [ownedTokenIdsData, isTokenIdsLoading, balance]);
 
   // Clear any existing loading timeouts
   const clearLoadingTimeout = useCallback(() => {
@@ -113,52 +150,78 @@ const Home: NextPage = () => {
     }, 5000);
   }, [clearLoadingTimeout]);
 
-  // Update nfts when transfer events change
+  // Keep useEffect for address validation
   useEffect(() => {
-    if (transferEvents !== undefined) {
-      updateNftsFromEvents();
-      setIsLoading(false);
-      clearLoadingTimeout();
-    }
-  }, [transferEvents, updateNftsFromEvents, clearLoadingTimeout]);
+    setIsAddressValid(validateAddress(addressInput));
+  }, [addressInput]);
 
-  // Handle wallet connection/disconnection
+  // Need to adjust loading logic based on isBalanceLoading and isTokenIdsLoading
   useEffect(() => {
-    if (!connectedAddress) {
-      // Clear NFTs when wallet is disconnected
-      setNfts([]);
-      setIsLoading(false);
-      clearLoadingTimeout();
-    } else {
-      // Set loading to true when wallet is initially connected
-      setIsLoading(true);
-      // Set a timeout to ensure loading state is eventually cleared
+    // Determine overall loading state
+    const loading =
+      !connectedAddress || isBalanceLoading || (balance !== undefined && balance > 0n && isTokenIdsLoading);
+    setIsLoading(loading);
+
+    // Handle timeout logic as before, but maybe based on the combined loading state
+    if (loading) {
       setLoadingTimeout();
-    }
-
-    // Clean up timeout when component unmounts or effect reruns
-    return clearLoadingTimeout;
-  }, [connectedAddress, clearLoadingTimeout, setLoadingTimeout]);
-
-  // Additional effect to ensure loading state ends once events query completes
-  useEffect(() => {
-    if (connectedAddress && !isEventsLoading) {
-      setIsLoading(false);
+    } else {
       clearLoadingTimeout();
     }
-  }, [connectedAddress, isEventsLoading, clearLoadingTimeout]);
 
-  const handleTransfer = () => {
-    // Logic for transferring will be implemented later
+    // Cleanup timeout
+    return clearLoadingTimeout;
+  }, [connectedAddress, isBalanceLoading, isTokenIdsLoading, balance, setLoadingTimeout, clearLoadingTimeout]);
+
+  const handleTransfer = async () => {
+    const selectedNft = nfts.find(nft => nft.selected);
+    // Ensure we have the selected NFT and a connected wallet
+    if (!selectedNft || !connectedAddress) {
+      notification.error(
+        `Transfer check failed: NFT Selected=${!!selectedNft}, Wallet Connected=${!!connectedAddress}`,
+      );
+      return;
+    }
+
+    const tokenId = BigInt(selectedNft.id.replace("#", ""));
     const modal = document.getElementById("transfer_modal") as HTMLDialogElement;
-    if (modal) modal.close();
-    setAddressInput("");
-    setIsAddressValid(false);
+
+    // Show pending notification immediately
+    const pendingNotification = notification.loading("Processing Transfer...");
+
+    try {
+      await transferNft(
+        {
+          functionName: "safeTransferFrom",
+          args: [connectedAddress, addressInput, tokenId],
+        },
+        {
+          onSuccess: async () => {
+            notification.remove(pendingNotification);
+            setNfts(prevNfts => prevNfts.filter(nft => nft.id !== selectedNft.id));
+            // Refetch balance and token IDs
+            await refetchBalance();
+            await refetchTokenIds();
+            if (modal) modal.close();
+            setAddressInput("");
+            setIsAddressValid(false);
+          },
+          onError: error => {
+            notification.remove(pendingNotification);
+            console.error("Error transferring NFT:", error);
+            notification.error(`Transfer failed: ${error.message}`);
+          },
+        },
+      );
+    } catch (error: any) {
+      notification.remove(pendingNotification);
+      console.error("Error initiating transfer:", error);
+      notification.error(`Transfer initiation failed: ${error.message}`);
+    }
   };
 
   const handleMint = async () => {
     if (!connectedAddress) return;
-
     try {
       await mintNft(
         {
@@ -167,8 +230,9 @@ const Home: NextPage = () => {
         },
         {
           onSuccess: async () => {
-            // Refetch transfer events to update the NFT list
-            await refetchTransferEvents();
+            // Refetch balance and token IDs
+            await refetchBalance();
+            await refetchTokenIds();
           },
         },
       );
@@ -192,9 +256,9 @@ const Home: NextPage = () => {
               <button
                 className="bg-primary text-white font-semibold rounded-lg px-6 py-2.5"
                 onClick={handleMint}
-                disabled={isPending}
+                disabled={isMintPending}
               >
-                {isPending ? "Minting..." : "Mint a vlaymen"}
+                {isMintPending ? "Minting..." : "Mint a vlaymen"}
               </button>
             )}
           </div>
@@ -223,9 +287,9 @@ const Home: NextPage = () => {
                 <button
                   className="bg-primary text-white font-semibold rounded-lg px-8 py-3 text-lg"
                   onClick={handleMint}
-                  disabled={isPending}
+                  disabled={isMintPending}
                 >
-                  {isPending ? "Minting..." : "Mint your first vlaymen"}
+                  {isMintPending ? "Minting..." : "Mint your first vlaymen"}
                 </button>
               </div>
             </div>
@@ -308,12 +372,10 @@ const Home: NextPage = () => {
             <label className="label">
               <span className="label-text text-white">Recipient Address</span>
             </label>
-            <input
-              type="text"
+            <AddressInput
               placeholder="Enter a wallet address or ENS name"
-              className={`input input-bordered w-full ${isAddressValid ? "input-success" : addressInput ? "input-error" : ""}`}
               value={addressInput}
-              onChange={handleAddressChange}
+              onChange={setAddressInput}
             />
             <div className="h-6 flex items-center justify-end">
               <span
@@ -334,10 +396,10 @@ const Home: NextPage = () => {
             </form>
             <button
               className="btn bg-[#9D91EE] hover:bg-[#7B66DC] text-white opacity-100 hover:opacity-90 disabled:opacity-50 disabled:bg-[#9D91EE]"
-              disabled={!isAddressValid}
+              disabled={!isAddressValid || isTransferPending}
               onClick={handleTransfer}
             >
-              Transfer
+              {isTransferPending ? <span className="loading loading-spinner loading-sm"></span> : "Transfer"}
             </button>
           </div>
         </div>
