@@ -1,6 +1,7 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
+import Image from "next/image";
 import type { NextPage } from "next";
 import { useAccount } from "wagmi";
 import { useScaffoldEventHistory, useScaffoldWriteContract } from "~~/hooks/scaffold-eth";
@@ -11,15 +12,24 @@ type Nft = {
   selected: boolean;
 };
 
-// Determine if we're in production or development environment
-const isProduction = process.env.NODE_ENV === "production";
-const NFT_IMAGE_BASE_URL = isProduction ? "https://vlaymen-nft-demo.vercel.app/nft_images" : "/nft_images";
-
 const Home: NextPage = () => {
   const [isLoading, setIsLoading] = useState(true);
   const [nfts, setNfts] = useState<Nft[]>([]);
   const [addressInput, setAddressInput] = useState("");
   const [isAddressValid, setIsAddressValid] = useState(false);
+
+  // Use ref to track loading timeouts to prevent stale closures
+  const loadingTimeoutRef = useRef<NodeJS.Timeout | null>(null);
+
+  // Determine base URL for NFT images based on environment
+  const baseImageUrl =
+    process.env.NODE_ENV === "development" ? "/nft_images" : "https://vlaymen-nft-demo.vercel.app/nft_images";
+
+  // Helper function to get image ID using modulo
+  const getImageId = (tokenId: string): number => {
+    const numericId = parseInt(tokenId, 10);
+    return numericId % 25; // Returns 0-24
+  };
 
   const { address: connectedAddress } = useAccount();
   const { writeContractAsync: mintNft, isPending } = useScaffoldWriteContract({
@@ -57,15 +67,21 @@ const Home: NextPage = () => {
     if (modal) modal.showModal();
   };
 
-  const { data: transferEvents, refetch: refetchTransferEvents } = useScaffoldEventHistory({
+  // Only fetch transfer events if wallet is connected
+  const {
+    data: transferEvents,
+    refetch: refetchTransferEvents,
+    isLoading: isEventsLoading,
+  } = useScaffoldEventHistory({
     contractName: "Vlaymen",
     eventName: "Transfer",
     fromBlock: 0n,
     filters: { to: connectedAddress },
+    enabled: !!connectedAddress,
   });
 
-  // Function to update NFTs from transfer events
-  const updateNftsFromEvents = () => {
+  // Function to update NFTs from transfer events wrapped in useCallback
+  const updateNftsFromEvents = useCallback(() => {
     if (transferEvents) {
       // Convert token IDs to the format needed for display
       const tokenNfts = transferEvents
@@ -77,14 +93,60 @@ const Home: NextPage = () => {
         .reverse(); // Reverse the list for display order
 
       setNfts(tokenNfts);
-      setIsLoading(false);
     }
-  };
+  }, [transferEvents]);
+
+  // Clear any existing loading timeouts
+  const clearLoadingTimeout = useCallback(() => {
+    if (loadingTimeoutRef.current) {
+      clearTimeout(loadingTimeoutRef.current);
+      loadingTimeoutRef.current = null;
+    }
+  }, []);
+
+  // Set a new loading timeout
+  const setLoadingTimeout = useCallback(() => {
+    clearLoadingTimeout();
+    loadingTimeoutRef.current = setTimeout(() => {
+      console.log("Forcing loading state to finish after timeout");
+      setIsLoading(false);
+    }, 5000);
+  }, [clearLoadingTimeout]);
 
   // Update nfts when transfer events change
   useEffect(() => {
-    updateNftsFromEvents();
-  }, [transferEvents]);
+    if (transferEvents !== undefined) {
+      updateNftsFromEvents();
+      setIsLoading(false);
+      clearLoadingTimeout();
+    }
+  }, [transferEvents, updateNftsFromEvents, clearLoadingTimeout]);
+
+  // Handle wallet connection/disconnection
+  useEffect(() => {
+    if (!connectedAddress) {
+      // Clear NFTs when wallet is disconnected
+      setNfts([]);
+      setIsLoading(false);
+      clearLoadingTimeout();
+    } else {
+      // Set loading to true when wallet is initially connected
+      setIsLoading(true);
+      // Set a timeout to ensure loading state is eventually cleared
+      setLoadingTimeout();
+    }
+
+    // Clean up timeout when component unmounts or effect reruns
+    return clearLoadingTimeout;
+  }, [connectedAddress, clearLoadingTimeout, setLoadingTimeout]);
+
+  // Additional effect to ensure loading state ends once events query completes
+  useEffect(() => {
+    if (connectedAddress && !isEventsLoading) {
+      setIsLoading(false);
+      clearLoadingTimeout();
+    }
+  }, [connectedAddress, isEventsLoading, clearLoadingTimeout]);
 
   const handleTransfer = () => {
     // Logic for transferring will be implemented later
@@ -126,18 +188,29 @@ const Home: NextPage = () => {
               </span>{" "}
               Collection
             </h1>
-            <button
-              className="bg-primary text-white font-semibold rounded-lg px-6 py-2.5"
-              onClick={handleMint}
-              disabled={isPending}
-            >
-              {isPending ? "Minting..." : "Mint a vlaymen"}
-            </button>
+            {connectedAddress && (
+              <button
+                className="bg-primary text-white font-semibold rounded-lg px-6 py-2.5"
+                onClick={handleMint}
+                disabled={isPending}
+              >
+                {isPending ? "Minting..." : "Mint a vlaymen"}
+              </button>
+            )}
           </div>
 
           {isLoading ? (
             <div className="flex justify-center items-center min-h-[70vh]">
               <div className="animate-spin rounded-full h-16 w-16 border-t-4 border-b-4 border-primary"></div>
+            </div>
+          ) : !connectedAddress ? (
+            <div className="flex justify-center items-center min-h-[70vh]">
+              <div className="border border-primary rounded-xl p-8 bg-[#DDCEFF] dark:bg-[#121330] flex flex-col items-center max-w-[66%] w-full">
+                <h2 className="text-4xl font-bold text-[#915BF8] mb-6">No Wallet Connected</h2>
+                <p className="text-center text-xl mb-10 max-w-[600px] text-[#121645] dark:text-[#F9FBFF]">
+                  Connect your wallet to view and mint vlaymen NFTs.
+                </p>
+              </div>
             </div>
           ) : nfts.length === 0 ? (
             <div className="flex justify-center items-center min-h-[70vh]">
@@ -167,11 +240,13 @@ const Home: NextPage = () => {
                   }`}
                 >
                   <figure className="relative bg-[#f1f1f1] aspect-square flex items-center justify-center overflow-hidden">
-                    {/* Display the NFT SVG image */}
-                    <img
-                      src={`${NFT_IMAGE_BASE_URL}/${nft.id.replace("#", "")}.svg`}
+                    {/* Display the NFT SVG image using modulo for image ID */}
+                    <Image
+                      src={`${baseImageUrl}/${getImageId(nft.id.replace("#", ""))}.svg`}
                       alt={`vlaymen ${nft.id}`}
-                      className="w-full h-full object-cover"
+                      fill
+                      className="object-cover"
+                      priority
                     />
 
                     {/* Paper airplane icon in purple circle - visible on hover */}
@@ -213,7 +288,21 @@ const Home: NextPage = () => {
               Transfer vlaymen {nfts.find(nft => nft.selected)?.id || ""}
             </span>
           </h3>
-          <p className="mb-6">Send your selected vlaymen NFT to another wallet address</p>
+
+          {/* Display Selected NFT Image */}
+          {nfts.find(nft => nft.selected) && (
+            <div className="mb-4 flex justify-center">
+              <Image
+                src={`${baseImageUrl}/${getImageId(nfts.find(nft => nft.selected)!.id.replace("#", ""))}.svg`}
+                alt={`vlaymen ${nfts.find(nft => nft.selected)!.id}`}
+                width={300}
+                height={300}
+                className="rounded-lg object-cover"
+              />
+            </div>
+          )}
+
+          <p className="mb-6">Send this vlaymen NFT to another wallet address</p>
 
           <div className="form-control w-full">
             <label className="label">
